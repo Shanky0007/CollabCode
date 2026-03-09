@@ -1,0 +1,50 @@
+# ── Dependencies ────────────────────────────────────────────
+node_modules/
+.pnp
+.pnp.js
+
+# ── Build outputs ────────────────────────────────────────────
+dist/
+build/
+.next/
+out/
+
+# ── Environment variables ────────────────────────────────────
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
+.env.test
+
+# ── TypeScript ───────────────────────────────────────────────
+*.tsbuildinfo
+next-env.d.ts
+
+# ── Logs ─────────────────────────────────────────────────────
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ── OS / Editor ──────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# ── Package manager locks (keep one, ignore others) ──────────
+# Remove whichever you don't use
+# package-lock.json
+# yarn.lock
+# pnpm-lock.yaml
+
+# ── Docker / Judge0 ──────────────────────────────────────────
+judge0/judge0-v1.13.1/judge0.conf
+
+# ── Misc ─────────────────────────────────────────────────────
+.turbo/
+.cache/
+coverage/

@@ -29,17 +29,24 @@ export default function CollaborativeEditor({ roomId, language, readOnly }: Prop
   const [executionJobId, setExecutionJobId] = useState<string | null>(null);
   const [stdin, setStdin] = useState("");
   const termClearRef = useRef<(() => void) | null>(null);
+  // True while we are actively polling a job we triggered ourselves.
+  // Prevents a remote EXECUTION_QUEUED broadcast from hijacking our terminal.
+  const locallyPollingRef = useRef(false);
 
   const broadcast = useBroadcastEvent();
 
   // Others for cursor decorations
   const others = useOthers();
 
-  // When another collaborator starts a run, show the output here too
+  // When another collaborator starts a run, show the output here too.
+  // Guard: skip if we're currently polling our own job — their broadcast
+  // would clear our terminal and redirect our poll to the wrong job.
   useEventListener(({ event }) => {
     if (event.type === "EXECUTION_QUEUED") {
-      termClearRef.current?.();
-      setExecutionJobId(event.jobId);
+      if (!locallyPollingRef.current) {
+        termClearRef.current?.();
+        setExecutionJobId(event.jobId);
+      }
     }
   });
 
@@ -62,7 +69,12 @@ export default function CollaborativeEditor({ roomId, language, readOnly }: Prop
       // Wait for Liveblocks to sync existing content before binding Monaco.
       // Without this, new joiners start with an empty Y.Doc that overwrites
       // the room's shared content before the sync arrives.
+      //
+      // NOTE: LiveblocksYjsProvider emits "sync" (not "synced" like y-websocket).
+      // We also check the `.synced` property in case the provider is already
+      // synced by the time the editor mounts (common on fast connections / tab 1).
       const bindMonaco = () => {
+        if (bindingRef.current) return; // guard against double-bind
         const binding = new MonacoBinding(
           yText,
           editor.getModel()!,
@@ -75,7 +87,7 @@ export default function CollaborativeEditor({ roomId, language, readOnly }: Prop
       if ((provider as any).synced) {
         bindMonaco();
       } else {
-        provider.once("synced", bindMonaco);
+        provider.once("sync", bindMonaco);
       }
     },
     [room]
@@ -120,8 +132,11 @@ export default function CollaborativeEditor({ roomId, language, readOnly }: Prop
   useEffect(() => {
     return () => {
       bindingRef.current?.destroy();
+      bindingRef.current = null;
       providerRef.current?.destroy();
+      providerRef.current = null;
       docRef.current?.destroy();
+      docRef.current = null;
     };
   }, []);
 
@@ -148,6 +163,7 @@ export default function CollaborativeEditor({ roomId, language, readOnly }: Prop
       });
       const data = await res.json();
       if (data.jobId) {
+        locallyPollingRef.current = true;
         setExecutionJobId(data.jobId);
         broadcast({ type: "EXECUTION_QUEUED", jobId: data.jobId, triggeredBy: "me" });
       }
@@ -210,6 +226,7 @@ export default function CollaborativeEditor({ roomId, language, readOnly }: Prop
           <TerminalPanel
             jobId={executionJobId}
             onReady={(clearFn) => { termClearRef.current = clearFn; }}
+            onComplete={() => { locallyPollingRef.current = false; }}
           />
           <StdinInput
             value={stdin}

@@ -75,22 +75,26 @@ function writeResult(term: XTerminal, result: ExecutionResult) {
 export default function TerminalPanel({
   jobId,
   onReady,
+  onComplete,
 }: {
   jobId: string | null;
   onReady?: (clear: () => void) => void;
+  onComplete?: () => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const mountedRef = useRef(false);
   // Buffer result that arrived before xterm finished initialising
   const pendingResultRef = useRef<ExecutionResult | null>(null);
 
-  // Initialise xterm — runs once after mount
+  // Initialise xterm — runs once after mount.
+  // Uses a closure-local `cancelled` flag instead of a ref so that React
+  // StrictMode's mount→unmount→remount cycle doesn't leave two xterm
+  // canvases stacked in the same container (which made writes invisible).
   useEffect(() => {
-    if (mountedRef.current || !containerRef.current) return;
-    mountedRef.current = true;
+    if (!containerRef.current) return;
+    let cancelled = false;
 
     // Dynamic imports — xterm is browser-only
     Promise.all([
@@ -98,7 +102,7 @@ export default function TerminalPanel({
       import("@xterm/addon-fit"),
       import("@xterm/addon-web-links"),
     ]).then(([{ Terminal }, { FitAddon }, { WebLinksAddon }]) => {
-      if (!containerRef.current) return;
+      if (cancelled || !containerRef.current) return;
 
       const term = new Terminal({
         theme: {
@@ -143,9 +147,9 @@ export default function TerminalPanel({
     });
 
     return () => {
+      cancelled = true;
       termRef.current?.dispose();
       termRef.current = null;
-      mountedRef.current = false;
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -184,6 +188,7 @@ export default function TerminalPanel({
             // xterm not ready yet — buffer and flush on init
             pendingResultRef.current = data;
           }
+          onComplete?.();
         }
       } catch {
         // keep polling on transient network error

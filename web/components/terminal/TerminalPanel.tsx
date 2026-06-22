@@ -74,10 +74,12 @@ function writeResult(term: XTerminal, result: ExecutionResult) {
 
 export default function TerminalPanel({
   jobId,
+  runBy,
   onReady,
   onComplete,
 }: {
   jobId: string | null;
+  runBy?: string | null;
   onReady?: (clear: () => void) => void;
   onComplete?: () => void;
 }) {
@@ -87,6 +89,10 @@ export default function TerminalPanel({
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // Buffer result that arrived before xterm finished initialising
   const pendingResultRef = useRef<ExecutionResult | null>(null);
+  // Keep latest runBy readable inside the jobId-keyed poll effect without
+  // re-running the effect when only the name changes.
+  const runByRef = useRef<string | null | undefined>(runBy);
+  runByRef.current = runBy;
 
   // Initialise xterm — runs once after mount.
   // Uses a closure-local `cancelled` flag instead of a ref so that React
@@ -169,7 +175,12 @@ export default function TerminalPanel({
 
     const term = termRef.current;
     if (term) {
-      term.writeln(`\r\n${ANSI.cyan}▶ Running…${ANSI.reset}`);
+      const who = runByRef.current;
+      const attribution =
+        who && who !== "You"
+          ? `${ANSI.gray}  (Run by ${who})${ANSI.reset}`
+          : "";
+      term.writeln(`\r\n${ANSI.cyan}▶ Running…${ANSI.reset}${attribution}`);
     }
 
     pollRef.current = setInterval(async () => {

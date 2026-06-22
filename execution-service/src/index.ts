@@ -7,9 +7,14 @@ import { startWorker } from "./queue/worker";
 const server = Fastify({ logger: true });
 
 async function bootstrap() {
-  // CORS — allow requests from the Next.js frontend
+  // CORS — allow requests from the Next.js frontend.
+  // FRONTEND_URL may be a comma-separated list (e.g. prod + Vercel preview URLs).
+  const allowedOrigins = (process.env.FRONTEND_URL || "http://localhost:3000")
+    .split(",")
+    .map((o) => o.trim())
+    .filter(Boolean);
   await server.register(cors, {
-    origin: process.env.FRONTEND_URL || "http://localhost:3000",
+    origin: allowedOrigins.length === 1 ? allowedOrigins[0] : allowedOrigins,
     methods: ["GET", "POST"],
   });
 

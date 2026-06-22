@@ -1,18 +1,46 @@
 @import "tailwindcss";
 @import "@xterm/xterm/css/xterm.css";
 
-/* Remote cursor decorations (y-monaco awareness) */
-.remote-cursor {
-  border-left: 2px solid var(--cursor-color, #7c3aed);
+/* Remote collaborator cursors, rendered as Monaco content widgets.
+   The widget DOM is built in CollaborativeEditor.tsx; per-user color is set
+   inline. These rules give the caret its shape and the name flag its layout. */
+.remote-cursor-widget {
+  position: relative;
+  pointer-events: none;
+  width: 0;
+  height: 0;
 }
-.remote-cursor-before {
-  content: "";
+
+/* Caret bar — a thin vertical line at the cursor position. */
+.remote-cursor-caret {
   position: absolute;
   top: 0;
-  left: -1px;
+  left: 0;
   width: 2px;
-  height: 100%;
-  background: var(--cursor-color, #7c3aed);
+  height: 18px; /* ~one line at fontSize 14 / lineHeight */
+  border-radius: 1px;
+  z-index: 20;
+}
+
+/* Small rounded name pill floating just above the caret. */
+.remote-cursor-flag {
+  position: absolute;
+  bottom: 2px; /* sit above the caret top */
+  left: 0;
+  max-width: 120px;
+  padding: 1px 6px;
+  font-size: 10px;
+  line-height: 14px;
+  font-family: var(--font-geist-sans), sans-serif;
+  font-weight: 600;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-radius: 9999px; /* full pill / oval */
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  z-index: 30;
+  transform: translateY(-100%);
 }
 
 /* Prevent xterm from overflowing its container */

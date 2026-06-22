@@ -42,6 +42,9 @@ export type RoomEvent =
   | { type: "EXECUTION_COMPLETE"; jobId: string; status: string }
   | { type: "LANGUAGE_CHANGED"; language: string; changedBy: string };
 
+// triggeredBy carries the runner's display name so collaborators' terminals
+// can show "Run by <name>". "me" is no longer used — see CollaborativeEditor.
+
 // ─── Room Context ─────────────────────────────────────────────────────────────
 
 export const {

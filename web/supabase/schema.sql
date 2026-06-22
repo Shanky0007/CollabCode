@@ -172,4 +172,3 @@ create policy "executions: editors can insert" on public.executions
 -- =============================================================================
 alter table public.rooms
   add column if not exists invite_token text unique;
-

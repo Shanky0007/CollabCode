@@ -1,0 +1,44 @@
+# Render Blueprint — deploys the CollabCode execution service.
+#
+# The Next.js `web` app is deployed separately on Vercel (see DEPLOY.md);
+# Render hosts only the always-on Fastify + BullMQ worker, which Vercel's
+# serverless model can't run.
+#
+# Usage: in the Render dashboard → New → Blueprint → pick this repo.
+# Then fill in the env vars marked `sync: false` (secrets) in the UI.
+
+services:
+  - type: web
+    name: collabcode-execution
+    runtime: node
+    plan: free
+    rootDir: execution-service
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: 4000
+      # Frontend origin(s) for CORS. Set to your Vercel URL after deploying web.
+      # Comma-separate to allow multiple (e.g. prod + a preview domain).
+      - key: FRONTEND_URL
+        sync: false
+      # Supabase — service role key (server-only, bypasses RLS)
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      # Upstash Redis — use the rediss:// TLS URL
+      - key: UPSTASH_REDIS_URL
+        sync: false
+      - key: UPSTASH_REDIS_TOKEN
+        sync: false
+      # Judge0 — set ONE of these (RapidAPI key OR a self-hosted JUDGE0_URL).
+      # Leaving JUDGE0_URL unset falls back to the community endpoint in code,
+      # but RapidAPI is recommended for reliability in production.
+      - key: JUDGE0_RAPIDAPI_KEY
+        sync: false
+      - key: JUDGE0_URL
+        sync: false
+      - key: JUDGE0_TOKEN
+        sync: false

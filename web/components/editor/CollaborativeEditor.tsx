@@ -6,7 +6,14 @@ import type { editor as MonacoEditor } from "monaco-editor";
 import * as Y from "yjs";
 import { MonacoBinding } from "y-monaco";
 import { LiveblocksYjsProvider } from "@liveblocks/yjs";
-import { useRoom, useOthers, useBroadcastEvent, useEventListener } from "@/lib/liveblocks";
+import {
+  useRoom,
+  useOthers,
+  useSelf,
+  useUpdateMyPresence,
+  useBroadcastEvent,
+  useEventListener,
+} from "@/lib/liveblocks";
 import TerminalPanel from "@/components/terminal/TerminalPanel";
 import StdinInput from "@/components/terminal/StdinInput";
 
@@ -24,9 +31,13 @@ export default function CollaborativeEditor({ roomId, language, readOnly }: Prop
   const bindingRef = useRef<MonacoBinding | null>(null);
   const providerRef = useRef<LiveblocksYjsProvider | null>(null);
   const docRef = useRef<Y.Doc | null>(null);
+  // Tracks the Monaco content widgets we add for remote cursors so we can
+  // remove the old ones each time presence changes.
+  const cursorWidgetsRef = useRef<MonacoEditor.IContentWidget[]>([]);
 
   const [isExecuting, setIsExecuting] = useState(false);
   const [executionJobId, setExecutionJobId] = useState<string | null>(null);
+  const [runBy, setRunBy] = useState<string | null>(null);
   const [stdin, setStdin] = useState("");
   const termClearRef = useRef<(() => void) | null>(null);
   // True while we are actively polling a job we triggered ourselves.
@@ -34,6 +45,8 @@ export default function CollaborativeEditor({ roomId, language, readOnly }: Prop
   const locallyPollingRef = useRef(false);
 
   const broadcast = useBroadcastEvent();
+  const updateMyPresence = useUpdateMyPresence();
+  const self = useSelf();
 
   // Others for cursor decorations
   const others = useOthers();
@@ -45,6 +58,7 @@ export default function CollaborativeEditor({ roomId, language, readOnly }: Prop
     if (event.type === "EXECUTION_QUEUED") {
       if (!locallyPollingRef.current) {
         termClearRef.current?.();
+        setRunBy(event.triggeredBy);
         setExecutionJobId(event.jobId);
       }
     }
@@ -89,43 +103,94 @@ export default function CollaborativeEditor({ roomId, language, readOnly }: Prop
       } else {
         provider.once("sync", bindMonaco);
       }
+
+      // Publish our cursor position to others via Liveblocks presence,
+      // so they can render a colored caret + name label where we're typing.
+      editor.onDidChangeCursorPosition((e) => {
+        updateMyPresence({
+          selection: {
+            lineNumber: e.position.lineNumber,
+            column: e.position.column,
+          },
+        });
+      });
+
+      // Publish an initial position immediately so collaborators see our caret
+      // before we move it (onDidChangeCursorPosition only fires on movement).
+      const initial = editor.getPosition();
+      if (initial) {
+        updateMyPresence({
+          selection: { lineNumber: initial.lineNumber, column: initial.column },
+        });
+      }
     },
-    [room]
+    [room, updateMyPresence]
   );
 
-  // Re-apply cursor color decorations when others change
+  // Render a colored caret + name label for each remote collaborator.
+  //
+  // We use Monaco "content widgets" — fully DOM-controlled nodes positioned
+  // exactly at each remote user's cursor. This is far more reliable than CSS
+  // decorations for zero-width cursor positions: we own the markup, so the
+  // colored bar and the name flag always render.
   useEffect(() => {
     if (!monacoRef.current || !editorRef.current) return;
 
-    const decorations = others
-      .filter((o) => o.presence?.selection)
-      .map((o) => {
-        const sel = o.presence!.selection!;
-        const color = o.info?.color ?? "#7c3aed";
-        return {
-          range: new monacoRef.current!.Range(
-            sel.lineNumber,
-            sel.column,
-            sel.lineNumber,
-            sel.column
-          ),
-          options: {
-            className: `remote-cursor`,
-            beforeContentClassName: `remote-cursor-before`,
-            // inject color as a CSS variable via glyphMarginClassName is not ideal;
-            // y-monaco handles awareness cursors natively via the binding.
-            // This decoration adds a visible blinking caret as backup.
-            stickiness:
-              monacoRef.current!.editor.TrackedRangeStickiness
-                .NeverGrowsWhenTypingAtEdges,
-            // Attach color via zIndex hack — full custom cursors in Step 5
-            hoverMessage: { value: o.info?.name ?? "Anonymous" },
-          },
-        };
-      });
+    const monaco = monacoRef.current;
+    const editor = editorRef.current;
 
-    const handles = editorRef.current.createDecorationsCollection(decorations);
-    return () => handles.clear();
+    // Remove widgets from the previous render.
+    for (const w of cursorWidgetsRef.current) {
+      editor.removeContentWidget(w);
+    }
+    cursorWidgetsRef.current = [];
+
+    const remote = others.filter((o) => o.presence?.selection);
+
+    for (const o of remote) {
+      const sel = o.presence!.selection!;
+      const color = o.info?.color ?? "#7c3aed";
+      const name = o.info?.name ?? "Anonymous";
+
+      // Build the cursor DOM: a thin vertical bar + a name flag above it.
+      const node = document.createElement("div");
+      node.className = "remote-cursor-widget";
+
+      const caret = document.createElement("div");
+      caret.className = "remote-cursor-caret";
+      caret.style.backgroundColor = color;
+
+      const label = document.createElement("div");
+      label.className = "remote-cursor-flag";
+      label.style.backgroundColor = color;
+      label.textContent = name;
+
+      node.appendChild(label);
+      node.appendChild(caret);
+
+      const widget: MonacoEditor.IContentWidget = {
+        getId: () => `remote-cursor-${o.connectionId}`,
+        getDomNode: () => node,
+        getPosition: () => ({
+          position: { lineNumber: sel.lineNumber, column: sel.column },
+          preference: [
+            monaco.editor.ContentWidgetPositionPreference.EXACT,
+          ],
+        }),
+      };
+
+      editor.addContentWidget(widget);
+      cursorWidgetsRef.current.push(widget);
+    }
+
+    return () => {
+      const ed = editorRef.current;
+      if (!ed) return;
+      for (const w of cursorWidgetsRef.current) {
+        ed.removeContentWidget(w);
+      }
+      cursorWidgetsRef.current = [];
+    };
   }, [others]);
 
   // Cleanup on unmount
@@ -149,6 +214,7 @@ export default function CollaborativeEditor({ roomId, language, readOnly }: Prop
     termClearRef.current?.();
     setIsExecuting(true);
     setExecutionJobId(null);
+    setRunBy("You");
 
     try {
       const res = await fetch("/api/execute", {
@@ -165,14 +231,16 @@ export default function CollaborativeEditor({ roomId, language, readOnly }: Prop
       if (data.jobId) {
         locallyPollingRef.current = true;
         setExecutionJobId(data.jobId);
-        broadcast({ type: "EXECUTION_QUEUED", jobId: data.jobId, triggeredBy: "me" });
+        // Send our display name so collaborators' terminals show "Run by <name>".
+        const myName = self?.info?.name ?? "Anonymous";
+        broadcast({ type: "EXECUTION_QUEUED", jobId: data.jobId, triggeredBy: myName });
       }
     } catch (err) {
       console.error("Execution request failed:", err);
     } finally {
       setIsExecuting(false);
     }
-  }, [roomId, language, stdin, isExecuting]);
+  }, [roomId, language, stdin, isExecuting, self, broadcast]);
 
   return (
     <div className="flex flex-col h-full">
@@ -225,6 +293,7 @@ export default function CollaborativeEditor({ roomId, language, readOnly }: Prop
         <div className="flex-[2] min-h-0 border-t border-zinc-800 flex flex-col">
           <TerminalPanel
             jobId={executionJobId}
+            runBy={runBy}
             onReady={(clearFn) => { termClearRef.current = clearFn; }}
             onComplete={() => { locallyPollingRef.current = false; }}
           />

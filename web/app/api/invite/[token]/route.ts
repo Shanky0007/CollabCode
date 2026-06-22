@@ -1,4 +1,4 @@
-import { auth } from "@clerk/nextjs/server";
+import { auth, currentUser } from "@clerk/nextjs/server";
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase";
 
@@ -27,11 +27,37 @@ export async function POST(
     return NextResponse.json({ error: "Invalid or expired invite link" }, { status: 404 });
   }
 
+  // Ensure the joining user exists in Supabase first. The Clerk webhook may
+  // not have fired locally (no tunnel), and room_members.user_id has a foreign
+  // key to users(id) — without this row the membership insert fails silently
+  // and the room page 404s for the new joiner.
+  const clerkUser = await currentUser();
+  if (clerkUser) {
+    await supabase.from("users").upsert(
+      {
+        id: userId,
+        email: clerkUser.emailAddresses[0]?.emailAddress ?? "",
+        username:
+          clerkUser.username ??
+          (`${clerkUser.firstName ?? ""}${clerkUser.lastName ?? ""}`.trim() || null),
+        avatar_url: clerkUser.imageUrl,
+      },
+      { onConflict: "id" }
+    );
+  }
+
   // Upsert membership — if already a member, this is a no-op
-  await supabase.from("room_members").upsert(
+  const { error: memberError } = await supabase.from("room_members").upsert(
     { room_id: room.id, user_id: userId, role: "editor" },
     { onConflict: "room_id,user_id" }
   );
+
+  if (memberError) {
+    return NextResponse.json(
+      { error: "Failed to join room. Please try again." },
+      { status: 500 }
+    );
+  }
 
   return NextResponse.json({ roomId: room.id, roomName: room.name });
 }

@@ -7,6 +7,15 @@ const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
 /**
+ * Fail loudly and early when config is missing. Without this, an undefined value
+ * builds a malformed URL and only surfaces later as "TypeError: fetch failed".
+ */
+function assertConfigured(name: string, value: string | undefined): string {
+  if (!value) throw new Error(`Missing environment variable: ${name}`);
+  return value;
+}
+
+/**
  * Browser/client-side Supabase client.
  * Uses anon key — subject to Row Level Security policies.
  */
@@ -34,7 +43,9 @@ export async function createServerSupabaseClient() {
  * Bypasses RLS — never expose this to the client.
  */
 export function createAdminClient() {
-  return createClient(supabaseUrl, supabaseServiceKey, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
+  return createClient(
+    assertConfigured("NEXT_PUBLIC_SUPABASE_URL", supabaseUrl),
+    assertConfigured("SUPABASE_SERVICE_ROLE_KEY", supabaseServiceKey),
+    { auth: { autoRefreshToken: false, persistSession: false } },
+  );
 }

@@ -24,7 +24,15 @@ export async function POST(req: NextRequest) {
   const { name, language = "javascript" } = await req.json();
   if (!name) return NextResponse.json({ error: "Room name is required" }, { status: 400 });
 
-  const supabase = createAdminClient();
+  let supabase;
+  try {
+    supabase = createAdminClient();
+  } catch {
+    return NextResponse.json(
+      { error: "Database is not configured. Check the Supabase environment variables." },
+      { status: 503 },
+    );
+  }
 
   // Ensure user exists in Supabase (webhook may not have fired yet).
   // rooms.owner_id references users(id), so this must succeed before inserting.
@@ -34,41 +42,51 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "No email address on your account" }, { status: 400 });
   }
 
-  const { error: userError } = await supabase.from("users").upsert({
-    id: userId,
-    email,
-    username: clerkUser.username ?? (`${clerkUser.firstName ?? ""}${clerkUser.lastName ?? ""}`.trim() || null),
-    avatar_url: clerkUser.imageUrl,
-  }, { onConflict: "id" });
+  try {
+    const { error: userError } = await supabase.from("users").upsert({
+      id: userId,
+      email,
+      username: clerkUser.username ?? (`${clerkUser.firstName ?? ""}${clerkUser.lastName ?? ""}`.trim() || null),
+      avatar_url: clerkUser.imageUrl,
+    }, { onConflict: "id" });
 
-  if (userError) {
-    return NextResponse.json({ error: userError.message }, { status: 500 });
-  }
+    if (userError) {
+      return NextResponse.json({ error: userError.message }, { status: 500 });
+    }
 
-  // Create the room
-  const { data: room, error: roomError } = await supabase
-    .from("rooms")
-    .insert({ name, language, owner_id: userId })
-    .select("id, name, language, created_at")
-    .single();
+    // Create the room
+    const { data: room, error: roomError } = await supabase
+      .from("rooms")
+      .insert({ name, language, owner_id: userId })
+      .select("id, name, language, created_at")
+      .single();
 
-  if (roomError || !room) {
+    if (roomError || !room) {
+      return NextResponse.json(
+        { error: roomError?.message ?? "Failed to create room" },
+        { status: 500 },
+      );
+    }
+
+    // Add creator as owner in room_members
+    const { error: memberError } = await supabase
+      .from("room_members")
+      .insert({ room_id: room.id, user_id: userId, role: "owner" });
+
+    if (memberError) {
+      // Roll back the orphaned room so it can't linger without its owner-member row
+      await supabase.from("rooms").delete().eq("id", room.id);
+      return NextResponse.json({ error: memberError.message }, { status: 500 });
+    }
+
+    return NextResponse.json(room, { status: 201 });
+  } catch (err) {
+    // supabase-js surfaces DNS/TLS/connection failures as "TypeError: fetch failed".
+    // Report it as an unreachable dependency instead of leaking the raw message.
+    console.error("POST /api/rooms — Supabase request failed:", err);
     return NextResponse.json(
-      { error: roomError?.message ?? "Failed to create room" },
-      { status: 500 },
+      { error: "Could not reach the database. It may be paused or misconfigured." },
+      { status: 503 },
     );
   }
-
-  // Add creator as owner in room_members
-  const { error: memberError } = await supabase
-    .from("room_members")
-    .insert({ room_id: room.id, user_id: userId, role: "owner" });
-
-  if (memberError) {
-    // Roll back the orphaned room so it can't linger without its owner-member row
-    await supabase.from("rooms").delete().eq("id", room.id);
-    return NextResponse.json({ error: memberError.message }, { status: 500 });
-  }
-
-  return NextResponse.json(room, { status: 201 });
 }
